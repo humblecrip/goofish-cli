@@ -48,6 +48,21 @@ def ensure_dirs(root: Path | None = None) -> Path:
     return base
 
 
+def cell_text(value: Any) -> Any:
+    """把值转成适合写进 CSV/Excel 的标量。
+
+    列表（如 items 的 `keywords`）直接写会变成 Python repr `['考研 资料']`——
+    在 Excel 里既丑又难筛选。统一用 ` | ` 连接；dict 走 JSON；None 变空串。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " | ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
 def _dir(root: Path | None, name: str) -> Path:
     return (root or ROOT) / name
 
@@ -220,7 +235,7 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], root: Path | None 
     writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({c: row.get(c, "") for c in columns})
+        writer.writerow({c: cell_text(row.get(c)) for c in columns})
     # 写 UTF-8 BOM：Excel 不猜编码，无 BOM 的中文 CSV 会被读成乱码。
     # 只影响本模块产出的报告文件；stdout 的 `--format csv` 不加 BOM，避免污染管道。
     path.write_text("\ufeff" + buf.getvalue(), encoding="utf-8")
@@ -302,7 +317,7 @@ def write_vocab_csv(rows: list[dict[str, Any]], columns: list[str],
     writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({c: row.get(c, "") for c in columns})
+        writer.writerow({c: cell_text(row.get(c)) for c in columns})
     # 写 UTF-8 BOM：Excel 不猜编码，无 BOM 的中文 CSV 会被读成乱码。
     # 只影响本模块产出的报告文件；stdout 的 `--format csv` 不加 BOM，避免污染管道。
     path.write_text("\ufeff" + buf.getvalue(), encoding="utf-8")

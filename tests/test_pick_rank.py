@@ -192,3 +192,43 @@ def test_weights_template_copied_on_first_run(tmp_path):
     assert path.is_file()
     assert cfg["dimensions"]["imbalance"]["weight"] == 0.3
     assert "模板" in source
+
+
+def test_xlsx_writes_multi_sheet_workbook(tmp_path):
+    """--xlsx 应产出多 sheet 工作簿，并带概览页说明数据来源与当时权重。"""
+    import pytest
+
+    pytest.importorskip("openpyxl")
+    from openpyxl import load_workbook
+
+    _fixture(tmp_path)
+    out = rank_cmd.rank(out=str(tmp_path), no_collect=True, top=5, xlsx=True)
+    path = Path(out["meta"]["xlsx"])
+    assert path.is_file() and path.suffix == ".xlsx"
+
+    wb = load_workbook(path)
+    assert wb.sheetnames[:3] == ["概览", "类目榜", "卖家榜"], wb.sheetnames
+    assert "商品明细" in wb.sheetnames and "被过滤" in wb.sheetnames
+
+    overview = wb["概览"]
+    cells = {r[0].value: r[1].value for r in overview.iter_rows(min_row=2)}
+    assert "权重·imbalance" in cells, "概览必须写明当时用的权重，否则日后无法归因"
+    assert cells.get("条数·excluded") == 1
+
+    cats = wb["类目榜"]
+    assert cats.freeze_panes == "A2", "冻结首行，滚动时表头常驻"
+    assert [c.value for c in cats[1]][:2] == ["rank", "score"]
+
+
+def test_xlsx_without_openpyxl_says_how_to_install(tmp_path, monkeypatch):
+    """缺可选依赖时必须给出可执行的安装提示，而不是裸 ImportError。"""
+    import pytest
+
+    from goofish_cli.core.errors import GoofishError
+
+    _fixture(tmp_path)
+    monkeypatch.setitem(__import__("sys").modules, "openpyxl", None)
+    with pytest.raises(GoofishError) as excinfo:
+        rank_cmd.rank(out=str(tmp_path), no_collect=True, xlsx=True)
+    msg = str(excinfo.value)
+    assert "openpyxl" in msg and "goofish-cli[excel]" in msg

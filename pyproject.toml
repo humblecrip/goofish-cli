@@ -38,6 +38,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 可选：`goofish pick rank --xlsx` 需要它。不装则 CSV/JSON 一切照常。
+excel = ["openpyxl>=3.1"]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",

@@ -59,6 +59,74 @@ def _may_collect(root: Path | None, threshold: float, enabled: bool) -> dict[str
         return {"aborted": f"自动补采失败：{type(exc).__name__}: {str(exc)[:120]}"}
 
 
+def write_xlsx(payload: dict[str, Any], categories: list[dict[str, Any]],
+               sellers: list[dict[str, Any]], items: list[dict[str, Any]],
+               root: Path | None = None, name: str | None = None) -> Path:
+    """把一轮结果写成一个多 sheet 工作簿。
+
+    openpyxl 是**可选依赖**（`pip install 'goofish-cli[excel]'`）——不装的话
+    CSV/JSON 照常可用，只有加 --xlsx 时才会提示。
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise GoofishError(
+            "需要 openpyxl 才能输出 xlsx：pip install 'goofish-cli[excel]'"
+            "（不加 --xlsx 时 CSV/JSON 不受影响）"
+        ) from exc
+
+    excluded = [row for row in items if row.get("excluded")]
+    sheets: list[tuple[str, list[dict[str, Any]], list[str]]] = [
+        ("类目榜", categories, CATEGORY_COLUMNS),
+        ("卖家榜", sellers, SELLER_COLUMNS),
+        ("商品明细", items, ITEM_COLUMNS),
+        ("被过滤", excluded, ITEM_COLUMNS),
+    ]
+
+    wb = Workbook()
+    # 概览页：让打开工作簿的人先知道「这份数据是怎么来的、当时用的什么权重」
+    overview = wb.active
+    overview.title = "概览"
+    overview.append(["字段", "值"])
+    overview.append(["生成时间", str(payload.get("generated_at", ""))])
+    overview.append(["权重来源", str(payload.get("weights_source", ""))])
+    for dim, cfg in (payload.get("weights_used", {}).get("dimensions") or {}).items():
+        overview.append([f"权重·{dim}", cfg.get("weight")])
+    counts = payload.get("counts") or {}
+    for key in ("categories", "sellers", "items", "excluded"):
+        overview.append([f"条数·{key}", counts.get(key)])
+    overview.append(["快照文件数", len(payload.get("snapshots") or [])])
+
+    head_font = Font(bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", fgColor="4472C4")
+    for title, rows, columns in sheets:
+        ws = wb.create_sheet(title)
+        ws.append(columns)
+        for row in rows:
+            ws.append([_store.cell_text(row.get(col)) for col in columns])
+        for cell in ws[1]:
+            cell.font = head_font
+            cell.fill = head_fill
+            cell.alignment = Alignment(horizontal="center")
+        ws.freeze_panes = "A2"                      # 冻结首行，滚动时表头常驻
+        for idx, col in enumerate(columns, 1):
+            width = max(len(col), *(len(str(_store.cell_text(row.get(col)))[:40])
+                                     for row in rows[:200])) \
+                if rows else len(col)
+            ws.column_dimensions[get_column_letter(idx)].width = min(max(width + 2, 8), 42)
+
+    if root is not None:
+        _store.ensure_dirs(root)
+        path = (root / "reports") / f"{name or _store.stamp()}.xlsx"
+    else:
+        _store.ensure_dirs(None)
+        path = (_store.ROOT / "reports") / f"{name or _store.stamp()}.xlsx"
+    wb.save(path)
+    return path
+
+
 def _cat_ids(recs: list[dict[str, Any]]) -> str:
     counts: dict[str, int] = {}
     for rec in recs:
@@ -189,6 +257,7 @@ def rank(
     weights: str = "",
     top: int = 20,
     no_collect: bool = False,
+    xlsx: bool = False,
 ) -> dict[str, Any]:
     """`--weights` 可传 JSON 串或文件路径，临时覆盖用户权重文件。"""
     root = Path(out).expanduser() if out else None
@@ -215,6 +284,11 @@ def rank(
         "sellers": result["sellers"][:max(1, top)],
         "items": result["items"],
     }
+    xlsx_path = None
+    if xlsx:
+        xlsx_path = write_xlsx(payload, result["categories"], result["sellers"],
+                               result["items"], root, name=stamp)
+
     json_path = _store.write_json(payload, root, name=stamp)
     csv_paths = [
         _store.write_csv(result["categories"], CATEGORY_COLUMNS, root, f"{stamp}-categories"),
@@ -229,6 +303,7 @@ def rank(
         "meta": {
             "report": str(json_path),
             "csv": [str(p) for p in csv_paths],
+            "xlsx": str(xlsx_path) if xlsx_path else None,
             "weights_source": cfg_source,
             "snapshots": len(result["snapshots"]),
             "collected": collected,
