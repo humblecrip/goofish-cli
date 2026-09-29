@@ -100,3 +100,11 @@ def test_median_helper():
     assert _scoring.median([3.0]) == 3.0
     assert _scoring.median([1.0, 3.0]) == 2.0
     assert _scoring.median([5.0, 1.0, 3.0]) == 3.0
+
+
+def test_median_avoids_float_artifacts():
+    """偶数样本的均值要收敛到两位，否则产出的 CSV 里会出现 1.5350000000000001。"""
+    m = _scoring.median([1.0, 2.07])
+    assert m is not None
+    assert m * 100 % 1 == 0, f"应为两位小数，实际 {m!r}"
+    assert m == pytest.approx(1.535, abs=0.006)

@@ -143,5 +143,6 @@ def median(values: list[float]) -> float | None:
     nums.sort()
     mid = len(nums) // 2
     if len(nums) % 2:
-        return float(nums[mid])
-    return (nums[mid - 1] + nums[mid]) / 2
+        return round(float(nums[mid]), 2)
+    # 保留两位：否则偶数个样本时会输出 1.5350000000000001 这类浮点毛刺
+    return round((nums[mid - 1] + nums[mid]) / 2, 2)
