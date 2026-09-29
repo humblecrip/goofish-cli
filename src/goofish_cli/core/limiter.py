@@ -17,6 +17,7 @@ import random
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from goofish_cli.core.errors import RateLimitedError
 
@@ -129,3 +130,66 @@ def wait_turn(api: str) -> None:
     state[bucket] = hits
     _save(state)
     time.sleep(random.uniform(0, READ_JITTER * 0.2))
+
+
+# ── 单轮调用预算 ─────────────────────────────────────────────────────────
+# 与滑动窗口的分工：滑窗限制「每分钟多少次」，预算限制「整轮一共多少次」。
+# 实测单会话累计约 250 次 mtop 调用即触发 RGV587，且触墙后继续请求会加深封锁，
+# 所以需要一个跨命令累计的上限，让上层能「跑到额度就停、而不是撞墙才停」。
+BUDGET_PATH = Path.home() / ".goofish-cli" / "run_budget.json"
+DEFAULT_RUN_BUDGET = 0          # 0 = 不限（只计数）
+
+
+def _read_budget() -> dict[str, Any]:
+    if not BUDGET_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(BUDGET_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_budget(state: dict[str, Any]) -> None:
+    BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BUDGET_PATH.write_text(json.dumps(state, ensure_ascii=False))
+
+
+def budget_used() -> int:
+    """本轮已消耗的调用次数。"""
+    try:
+        return int(_read_budget().get("count", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def reset_budget() -> None:
+    """开新一轮：清空计数。"""
+    _write_budget({"count": 0, "started_at": time.time()})
+
+
+def consume_budget(limit: int, *, label: str = "本轮") -> int:
+    """消耗一次调用额度；超限抛 RateLimitedError。返回消耗后的已用次数。
+
+    `limit <= 0` 表示不限（仍然计数，便于事后统计）。
+    """
+    state = _read_budget()
+    try:
+        used = int(state.get("count", 0) or 0)
+    except (TypeError, ValueError):
+        used = 0
+    if limit > 0 and used >= limit:
+        try:
+            started = float(state.get("started_at", 0) or 0)
+        except (TypeError, ValueError):
+            started = 0.0
+        began = time.strftime("%H:%M:%S", time.localtime(started)) if started else "?"
+        raise RateLimitedError(
+            f"{label}预算 {limit} 次调用已用尽（自 {began} 起计数）。"
+            f"已抓到的数据已落盘；重跑会与已有快照合并，不需要重头再来。"
+        )
+    state["count"] = used + 1
+    state.setdefault("started_at", time.time())
+    state["last_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_budget(state)
+    return used + 1

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "note": "选品权重。全部为待校准初值：改完直接重跑 `goofish pick rank` 即可。每轮结果会把本次使用的权重一起冻结落盘，便于事后归因（见 reports/*.json 的 weights_used）。",
+  "normalization": "quantile",
+  "min_samples": 5,
+  "snapshot_max_age_hours": 12,
+  "dimensions": {
+    "imbalance": {
+      "weight": 0.3,
+      "label": "需求供给失衡",
+      "desc": "想要人数中位 ÷ 有效供给量。供给被截断（>=800000）时该维度失效"
+    },
+    "delta_rate": {
+      "weight": 0.25,
+      "label": "成交速率",
+      "desc": "Δ卖家评价数/天。需要 >=2 个不同时刻的快照，否则该维度失效并按剩余权重重新归一化",
+      "needs_two_snapshots": true
+    },
+    "want": {
+      "weight": 0.15,
+      "label": "需求热度",
+      "desc": "想要人数中位。是发布以来累计值，老品天然占优，故权重低于失衡与速率"
+    },
+    "seller_base": {
+      "weight": 0.15,
+      "label": "卖家成交基数",
+      "desc": "该关键词下卖家累计评价数的中位"
+    },
+    "samples": {
+      "weight": 0.1,
+      "label": "样本可信度",
+      "desc": "该关键词下去重后的商品数"
+    },
+    "price": {
+      "weight": 0.05,
+      "label": "价格带",
+      "desc": "价格中位（高者单件效率更好；权重最低，只影响资金效率）"
+    }
+  },
+  "exclusion": {
+    "renewal_strong": [
+      "直充", "代充", "充值", "卡密", "兑换码", "日卡", "天卡", "周卡",
+      "月卡", "季卡", "年卡", "续费", "包月", "点券", "代下单", "共享账号",
+      "租号", "出租账号", "自动发货卡"
+    ],
+    "renewal_weak": ["会员", "vip", "svip"],
+    "human": [
+      "代练", "代肝", "代打", "陪玩", "陪聊", "上号", "带练", "带打",
+      "一对一", "私教", "代做", "定制", "定做", "答疑", "远程协助", "手把手"
+    ],
+    "low_price_ceiling": 5.0
+  }
+}

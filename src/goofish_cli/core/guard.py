@@ -56,6 +56,11 @@ def _save(until: float, reason: str = "") -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False))
 
 
+def remaining() -> float:
+    """熔断剩余秒数（0 表示未熔断）。供调用方决定「等还是退」而不是直接失败。"""
+    return max(0.0, _load() - time.time())
+
+
 def check() -> None:
     state = _load_state()
     try:

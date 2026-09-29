@@ -25,6 +25,8 @@ def _isolate_goofish_state(tmp_path, monkeypatch):
         "goofish_cli.core.limiter.STATE_PATH", state_dir / "limiter.json", raising=False)
     monkeypatch.setattr(
         "goofish_cli.core.guard.STATE_PATH", state_dir / "circuit.json", raising=False)
+    monkeypatch.setattr(
+        "goofish_cli.core.limiter.BUDGET_PATH", state_dir / "run_budget.json", raising=False)
     # 读限流默认放到很高、抖动关掉，避免测试被真实 sleep 拖慢；
     # 专门验证限流行为的测试会自己 setenv / 改 READ_JITTER 覆盖。
     monkeypatch.setenv("GOOFISH_READ_RPM", _FAST_READ_RPM)
