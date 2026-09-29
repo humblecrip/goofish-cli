@@ -19,7 +19,7 @@ from goofish_cli.core import Strategy, command
 
 COLUMNS = [
     "term", "grams", "titles", "coverage", "occurrences",
-    "avg_want", "max_want", "samples",
+    "avg_want", "max_want", "boundary_rate", "samples",
 ]
 MIN_GRAM = 2
 MAX_GRAM = 4
@@ -40,6 +40,33 @@ def _ngrams(title: str, low: int = MIN_GRAM, high: int = MAX_GRAM) -> set[str]:
             if gram.isdigit():
                 continue
             out.add(gram)
+    return out
+
+
+_BOUNDARY_CHARS = set(" \t　0123456789·,，.。!！?？:：;；、/\\|-—_+*#@()（）[]【】{}<>《》\"'“”‘’~&%$^")
+
+
+def boundary_counts(title: str) -> dict[str, tuple[int, int]]:
+    """统计每个片段的 (总出现次数, 位于词边界的次数)。
+
+    为什么需要：无分词 n-gram 会产出大量**碎片**（「持续更新」里的「续更新」）。
+    真品类名常出现在标题开头/结尾，或紧邻数字、标点、空格；碎片很少出现在边界。
+    这是廉价但有效的精度信号（jieba 是更彻底的解法，但会引入依赖）。
+    """
+    out: dict[str, tuple[int, int]] = {}
+    for size in range(MIN_GRAM, MAX_GRAM + 1):
+        for i in range(len(title) - size + 1):
+            gram = title[i:i + size]
+            if any(ch in _BOUNDARY_CHARS for ch in gram):
+                continue
+            if gram.isdigit():
+                continue
+            left = title[i - 1] if i > 0 else ""
+            right = title[i + size] if i + size < len(title) else ""
+            at_edge = (not left or left in _BOUNDARY_CHARS) or \
+                (not right or right in _BOUNDARY_CHARS)
+            total, edge = out.get(gram, (0, 0))
+            out[gram] = (total + 1, edge + (1 if at_edge else 0))
     return out
 
 
@@ -64,6 +91,65 @@ def _prune(candidates: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+def term_stats(records: list[dict[str, Any]], min_titles: int = 3,
+               top: int = 60) -> list[dict[str, Any]]:
+    """从商品记录里抽出候选词频表（vocab 命令与 evolve 共用同一份实现）。
+
+    返回行含 term/grams/titles/coverage/occurrences/avg_want/max_want/samples。
+    """
+    if not records:
+        return []
+
+    total = len(records)
+    stats: dict[str, dict[str, Any]] = {}
+    for rec in records:
+        title = str(rec.get("title") or "")
+        if not title:
+            continue
+        want = rec.get("want") if isinstance(rec.get("want"), (int, float)) else None
+        for gram in _ngrams(title):
+            row = stats.setdefault(gram, {
+                "term": gram, "grams": len(gram), "titles": 0, "occurrences": 0,
+                "want_sum": 0.0, "want_n": 0, "max_want": 0,
+                "hits": 0, "edge_hits": 0, "_samples": [],
+            })
+            row["titles"] += 1
+            row["occurrences"] += title.count(gram)
+            if want is not None:
+                row["want_sum"] += want
+                row["want_n"] += 1
+                row["max_want"] = max(row["max_want"], int(want))
+            if len(row["_samples"]) < 3 and title not in row["_samples"]:
+                row["_samples"].append(title)
+        # 注意：循环变量**不能**叫 total —— 会遮蔽上面的 total = len(records)，
+        # 让 coverage 算成垃圾值（这个 bug 我犯过一次，靠逐条诊断才抓出来）
+        for gram, (hits_count, edge_hits) in boundary_counts(title).items():
+            row = stats.get(gram)
+            if row is None:
+                continue
+            row["hits"] = row.get("hits", 0) + hits_count
+            row["edge_hits"] = row.get("edge_hits", 0) + edge_hits
+
+    candidates = {k: v for k, v in stats.items() if v["titles"] >= max(1, min_titles)}
+    kept = _prune(candidates)
+    kept.sort(key=lambda r: (-r["titles"], -r["grams"]))
+
+    rows: list[dict[str, Any]] = []
+    for row in kept[:max(1, top)]:
+        rows.append({
+            "term": row["term"],
+            "grams": row["grams"],
+            "titles": row["titles"],
+            "coverage": round(row["titles"] / total, 3),
+            "occurrences": row["occurrences"],
+            "avg_want": round(row["want_sum"] / row["want_n"], 1) if row["want_n"] else None,
+            "max_want": row["max_want"],
+            "boundary_rate": round(row.get("edge_hits", 0) / row["hits"], 3) if row.get("hits") else None,
+            "samples": " ⏐ ".join(row["_samples"]),
+        })
+    return rows
+
+
 @command(
     namespace="pick",
     name="vocab",
@@ -83,50 +169,12 @@ def vocab(
     if not records:
         return {"items": [], "note": "没有快照数据，先跑 `goofish pick collect`"}
 
-    total = len(records)
-    stats: dict[str, dict[str, Any]] = {}
-    for rec in records:
-        title = str(rec.get("title") or "")
-        if not title:
-            continue
-        want = rec.get("want") if isinstance(rec.get("want"), (int, float)) else None
-        for gram in _ngrams(title):
-            row = stats.setdefault(gram, {
-                "term": gram, "grams": len(gram), "titles": 0, "occurrences": 0,
-                "want_sum": 0.0, "want_n": 0, "max_want": 0,
-                "_samples": [],
-            })
-            row["titles"] += 1
-            row["occurrences"] += title.count(gram)
-            if want is not None:
-                row["want_sum"] += want
-                row["want_n"] += 1
-                row["max_want"] = max(row["max_want"], int(want))
-            if len(row["_samples"]) < 3 and title not in row["_samples"]:
-                row["_samples"].append(title)
-
-    candidates = {k: v for k, v in stats.items() if v["titles"] >= max(1, min_titles)}
-    kept = _prune(candidates)
-    kept.sort(key=lambda r: (-r["titles"], -r["grams"]))
-
-    rows: list[dict[str, Any]] = []
-    for row in kept[:max(1, top)]:
-        rows.append({
-            "term": row["term"],
-            "grams": row["grams"],
-            "titles": row["titles"],
-            "coverage": round(row["titles"] / total, 3),
-            "occurrences": row["occurrences"],
-            "avg_want": round(row["want_sum"] / row["want_n"], 1) if row["want_n"] else None,
-            "max_want": row["max_want"],
-            "samples": " ⏐ ".join(row["_samples"]),
-        })
-
+    rows = term_stats(records, min_titles=min_titles, top=top)
     path = _store.write_vocab_csv(rows, COLUMNS, root)
     return {
         "items": rows,
         "csv": str(path),
-        "titles": total,
+        "titles": len(records),
         "note": "人工划掉不属于目标类目的词后，把保留的词写入 <picks>/keywords.txt",
     }
 
@@ -134,4 +182,7 @@ def vocab(
 __test__ = {
     "_ngrams": _ngrams,
     "_prune": _prune,
+    "boundary_counts": boundary_counts,
+    "term_stats": term_stats,
 }
+

@@ -225,6 +225,73 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], root: Path | None 
     return path
 
 
+def evolve_state_path(root: Path | None = None) -> Path:
+    return (root or ROOT) / "evolve_state.json"
+
+
+def load_evolve_state(root: Path | None = None) -> dict[str, Any]:
+    path = evolve_state_path(root)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_evolve_state(state: dict[str, Any], root: Path | None = None) -> Path:
+    ensure_dirs(root)
+    path = evolve_state_path(root)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def next_keywords_path(root: Path | None = None) -> Path:
+    """本轮采集子集（由 evolve 选出），供定时任务喂给 pick collect。"""
+    return (root or ROOT) / "keywords.next.txt"
+
+
+def write_keywords(words: list[str], root: Path | None = None,
+                   path: Path | None = None) -> Path:
+    ensure_dirs(root)
+    target = path or keywords_path(root)
+    target.write_text("\n".join(words) + "\n", encoding="utf-8")
+    return target
+
+
+def append_changelog(entries: list[dict[str, Any]], root: Path | None = None) -> Path:
+    ensure_dirs(root)
+    path = (root or ROOT) / "keywords.changelog.jsonl"
+    with path.open("a", encoding="utf-8") as fh:
+        for entry in entries:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return path
+
+
+def latest_report(root: Path | None = None) -> dict[str, Any]:
+    """最近一份 rank 报告（用于取打分）。"""
+    d = _dir(root, "reports")
+    if not d.exists():
+        return {}
+    files = sorted(p for p in d.glob("*.json") if p.name.count("-") == 2)
+    if not files:
+        return {}
+    try:
+        return json.loads(files[-1].read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def scores_from_report(report: dict[str, Any]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for row in report.get("categories") or []:
+        score = row.get("score")
+        if row.get("keyword") and isinstance(score, (int, float)):
+            out[str(row["keyword"])] = float(score)
+    return out
+
+
 def write_vocab_csv(rows: list[dict[str, Any]], columns: list[str],
                     root: Path | None = None) -> Path:
     ensure_dirs(root)

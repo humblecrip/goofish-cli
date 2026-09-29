@@ -51,3 +51,23 @@ def test_prune_keeps_substring_that_is_much_more_frequent():
     }
     kept = {r["term"] for r in vocab._prune(cands)}
     assert "素材" in kept
+
+
+def test_coverage_is_a_ratio_not_a_count():
+    """回归：term_stats 内部的循环变量曾遮蔽 total，导致 coverage 变成条数值。
+
+    这个 bug 会让下游按覆盖率过滤的候选**全部被拒**，症状是"一个词都挖不出来"，
+    很难从输出上看出来，所以必须钉死。
+    """
+    recs = [
+        {"title": "考研资料 全套 真题", "want": 10},
+        {"title": "考研资料 电子版", "want": 20},
+        {"title": "教资资料 笔记", "want": 30},
+        {"title": "完全无关的标题", "want": 5},
+    ]
+    rows = {r["term"]: r for r in vocab.term_stats(recs, min_titles=2, top=50)}
+    assert "考研资料" in rows
+    row = rows["考研资料"]
+    assert row["titles"] == 2
+    assert row["coverage"] == 0.5, f"coverage 应为比例，实际 {row['coverage']}"
+    assert 0 < row["coverage"] <= 1
