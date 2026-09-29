@@ -16,7 +16,8 @@
           "auth_login",
           "auth_reset_guard",
           "message_watch",
-          "skills_install"
+          "skills_install",
+          "pick_collect"
         ]
       }
     }
