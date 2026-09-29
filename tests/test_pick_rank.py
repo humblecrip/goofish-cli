@@ -166,13 +166,14 @@ def test_rank_command_writes_four_artifacts(tmp_path):
     assert payload["counts"]["excluded"] == 1
 
     assert len(meta["csv"]) == 3
-    header = Path(meta["csv"][0]).read_text(encoding="utf-8").splitlines()[0]
+    # 用 utf-8-sig 读：报告 CSV 带 BOM（为了让 Excel 不乱码）
+    header = Path(meta["csv"][0]).read_text(encoding="utf-8-sig").splitlines()[0]
     assert header.split(",")[:3] == list(rank_cmd.CATEGORY_COLUMNS)[:3]
 
-    seller_header = Path(meta["csv"][1]).read_text(encoding="utf-8").splitlines()[0]
+    seller_header = Path(meta["csv"][1]).read_text(encoding="utf-8-sig").splitlines()[0]
     assert "items_sampled" in seller_header, "「采到几件货」是卖家榜的核心列"
 
-    with Path(meta["csv"][2]).open(encoding="utf-8") as fh:
+    with Path(meta["csv"][2]).open(encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh))
     assert {"excluded", "exclude_reason"} <= set(rows[0])
 

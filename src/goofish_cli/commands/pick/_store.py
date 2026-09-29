@@ -221,7 +221,9 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], root: Path | None 
     writer.writeheader()
     for row in rows:
         writer.writerow({c: row.get(c, "") for c in columns})
-    path.write_text(buf.getvalue(), encoding="utf-8")
+    # 写 UTF-8 BOM：Excel 不猜编码，无 BOM 的中文 CSV 会被读成乱码。
+    # 只影响本模块产出的报告文件；stdout 的 `--format csv` 不加 BOM，避免污染管道。
+    path.write_text("\ufeff" + buf.getvalue(), encoding="utf-8")
     return path
 
 
@@ -301,5 +303,7 @@ def write_vocab_csv(rows: list[dict[str, Any]], columns: list[str],
     writer.writeheader()
     for row in rows:
         writer.writerow({c: row.get(c, "") for c in columns})
-    path.write_text(buf.getvalue(), encoding="utf-8")
+    # 写 UTF-8 BOM：Excel 不猜编码，无 BOM 的中文 CSV 会被读成乱码。
+    # 只影响本模块产出的报告文件；stdout 的 `--format csv` 不加 BOM，避免污染管道。
+    path.write_text("\ufeff" + buf.getvalue(), encoding="utf-8")
     return path
