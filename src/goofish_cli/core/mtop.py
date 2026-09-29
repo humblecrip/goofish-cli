@@ -13,6 +13,7 @@ from typing import Any
 
 from loguru import logger
 
+from goofish_cli.core import guard, limiter
 from goofish_cli.core.errors import (
     AuthRequiredError,
     GoofishError,
@@ -78,7 +79,15 @@ def call(
     （`FAIL_SYS_SESSION_EXPIRED`）失效时，自动用 Playwright 访问闲鱼首页 + 点
     passport 弹窗的"快速进入"免密登录刷新 cookie 后重试一次。递归调用时置 False
     避免死循环。
+
+    入口统一做了两件事（原版只在 3 个写命令上做，读路径完全裸奔）：
+    1. `guard.check()` —— 熔断生效时所有命令（含读）立即拒绝，不再继续打；
+    2. `limiter.wait_turn(api)` —— 读路径等待式限流 + 抖动。
+    命中风控时把触发接口与原因写入熔断状态，便于诊断。
     """
+    guard.check()
+    limiter.wait_turn(api)
+
     url = f"{MTOP_HOST}/h5/{api}/{version}/"
     t_ms = str(int(time.time() * 1000))
     data_val = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
@@ -115,6 +124,11 @@ def call(
     raw = resp.json()
     try:
         _classify_error(raw, api)
+    except RiskControlError as e:
+        # 风控是服务端裁决：立刻熔断，让后续请求（含读）被拒绝，
+        # 而不是抛异常让上层立刻重试 —— 实测重试会加深封锁。
+        guard.trip(f"{api}: {e}")
+        raise
     except AuthRequiredError as e:
         # token 层（_m_h5_tk 过期）和 session 层（cookie2/sgcookie 失效）都可以通过
         # Playwright goto 闲鱼首页 → 点 passport 弹窗的"快速进入"免密记忆登录恢复。

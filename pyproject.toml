@@ -94,3 +94,8 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# 直接从 src 导入，避免依赖 `pip install -e` 生成的 .pth：
+# macOS 上 uv/hatchling 生成的 .pth 会被打上 UF_HIDDEN 标志，而 CPython 的
+# site.py 会跳过隐藏的 .pth（"Skipping hidden .pth file"），导致 editable
+# 安装静默失效、测试报 ModuleNotFoundError。
+pythonpath = ["src"]
